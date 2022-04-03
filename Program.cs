@@ -48,6 +48,14 @@ namespace HpSwitchControlApi
 
 			DoCommand(dev => dev.Reset(), configureAdapter: true);
 
+			server.AddRoute(null, null, (urlArgs, request, response) =>
+			{
+				if (config.HttpToken != null && request.Headers["authorization"] != $"Bearer {config.HttpToken}")
+					throw new UnauthorizedAccessException();
+
+				return true;
+			});
+
 			server.AddRoute("GET", @"/slot/(\d+)/channel/(\d+)", (urlArgs, request, response) =>
 			{
 				var state = false;

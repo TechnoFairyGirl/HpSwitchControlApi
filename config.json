@@ -2,4 +2,5 @@
 	"gpibHost": "gpio.int.bork.in",
 	"gpibAddress": 8,
 	"httpPort": 8091,
+	"httpToken": "",
 }
