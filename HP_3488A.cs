@@ -45,6 +45,9 @@ namespace HpSwitchControlApi
 		public byte DigitalRead(int slot, DigitalPort port) =>
 			byte.Parse(gpib.Query($"DREAD {ChannelAddress(slot, (int)port)}"));
 
+		public void CardReset(int slot) =>
+			gpib.Query($"CRESET {slot}");
+
 		public void Local() =>
 			gpib.Local();
 

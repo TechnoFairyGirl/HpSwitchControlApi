@@ -102,6 +102,12 @@ namespace HpSwitchControlApi
 					DoCommand(dev => dev.DigitalWrite(int.Parse(urlArgs[0]), port, value));
 			});
 
+			server.AddRoute("POST", @"/slot/(\d+)/reset", (urlArgs, request, response) =>
+			{
+				lock (lockObj)
+					DoCommand(dev => dev.CardReset(int.Parse(urlArgs[0])));
+			});
+
 			server.AddExactRoute("POST", @"/reset", (request, response) =>
 			{
 				lock (lockObj)
