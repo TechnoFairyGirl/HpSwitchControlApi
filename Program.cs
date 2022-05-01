@@ -13,7 +13,8 @@ namespace HpSwitchControlApi
 	sealed class Config
 	{
 		public string GpibHost { get; set; }
-		public int GpibAddress { get; set; }
+		public int SwitchGpibAddress { get; set; }
+		public int MeterGpibAddress { get; set; }
 		public int HttpPort { get; set; }
 		public string HttpToken { get; set; }
 	}
@@ -22,15 +23,27 @@ namespace HpSwitchControlApi
 	{
 		static Config config;
 
-		static T DoCommand<T>(Func<HP_3488A, T> callback, bool configureAdapter = false)
+		static T SwitchCommand<T>(Func<HP_3488A, T> callback, bool configureAdapter = false)
 		{
-			using (var device = new HP_3488A(config.GpibHost, config.GpibAddress, configureAdapter))
+			using (var device = new HP_3488A(config.GpibHost, config.SwitchGpibAddress, configureAdapter))
 				return callback(device);
 		}
 
-		static void DoCommand(Action<HP_3488A> callback, bool configureAdapter = false)
+		static void SwitchCommand(Action<HP_3488A> callback, bool configureAdapter = false)
 		{
-			using (var device = new HP_3488A(config.GpibHost, config.GpibAddress, configureAdapter))
+			using (var device = new HP_3488A(config.GpibHost, config.SwitchGpibAddress, configureAdapter))
+				callback(device);
+		}
+
+		static T MeterCommand<T>(Func<HP_3437A, T> callback, bool configureAdapter = false)
+		{
+			using (var device = new HP_3437A(config.GpibHost, config.MeterGpibAddress, configureAdapter))
+				return callback(device);
+		}
+
+		static void MeterCommand(Action<HP_3437A> callback, bool configureAdapter = false)
+		{
+			using (var device = new HP_3437A(config.GpibHost, config.MeterGpibAddress, configureAdapter))
 				callback(device);
 		}
 
@@ -44,10 +57,6 @@ namespace HpSwitchControlApi
 
 			var server = new HttpServer(config.HttpPort);
 
-			server.Log($"Using host '{config.GpibHost}', GPIB address {config.GpibAddress}.");
-
-			DoCommand(dev => dev.Reset(), configureAdapter: true);
-
 			server.AddRoute(null, null, (urlArgs, request, response) =>
 			{
 				if (config.HttpToken != null && request.Headers["authorization"] != $"Bearer {config.HttpToken}")
@@ -56,83 +65,129 @@ namespace HpSwitchControlApi
 				return true;
 			});
 
-			server.AddRoute("GET", @"/slot/(\d+)/channel/(\d+)", (urlArgs, request, response) =>
+			server.Log($"Using adapter host '{config.GpibHost}'.");
+
+			if (config.SwitchGpibAddress != null)
 			{
-				var state = false;
+				server.Log($"Using switch GPIB address {config.SwitchGpibAddress}.");
 
-				lock (lockObj)
-					state = DoCommand(dev => dev.GetState(int.Parse(urlArgs[0]), int.Parse(urlArgs[1])));
+				SwitchCommand(dev => dev.Reset(), configureAdapter: true);
 
-				response.WriteBodyJson(state);
-			});
+				server.AddRoute("GET", @"/switch/slot/(\d+)/channel/(\d+)", (urlArgs, request, response) =>
+				{
+					var state = false;
 
-			server.AddRoute("POST", @"/slot/(\d+)/channel/(\d+)", (urlArgs, request, response) =>
+					lock (lockObj)
+						state = SwitchCommand(dev => dev.GetState(int.Parse(urlArgs[0]), int.Parse(urlArgs[1])));
+
+					response.WriteBodyJson(state);
+				});
+
+				server.AddRoute("POST", @"/switch/slot/(\d+)/channel/(\d+)", (urlArgs, request, response) =>
+				{
+					var state = request.ReadBodyJson<bool>();
+
+					lock (lockObj)
+						SwitchCommand(dev => dev.SetState(int.Parse(urlArgs[0]), int.Parse(urlArgs[1]), state));
+				});
+
+				server.AddRoute("GET", @"/switch/slot/(\d+)/digital-port/([^/]+)", (urlArgs, request, response) =>
+				{
+					var port =
+						urlArgs[1] == "low-byte" ? HP_3488A.DigitalPort.LowByte :
+						urlArgs[1] == "high-byte" ? HP_3488A.DigitalPort.HighByte :
+						throw new ArgumentException();
+
+					var value = 0;
+
+					lock (lockObj)
+						value = SwitchCommand(dev => dev.DigitalRead(int.Parse(urlArgs[0]), port));
+
+					response.WriteBodyJson(value);
+				});
+
+				server.AddRoute("POST", @"/switch/slot/(\d+)/digital-port/([^/]+)", (urlArgs, request, response) =>
+				{
+					var port =
+						urlArgs[1] == "low-byte" ? HP_3488A.DigitalPort.LowByte :
+						urlArgs[1] == "high-byte" ? HP_3488A.DigitalPort.HighByte :
+						throw new ArgumentException();
+
+					var value = request.ReadBodyJson<byte>();
+
+					lock (lockObj)
+						SwitchCommand(dev => dev.DigitalWrite(int.Parse(urlArgs[0]), port, value));
+				});
+
+				server.AddRoute("POST", @"/switch/slot/(\d+)/reset", (urlArgs, request, response) =>
+				{
+					lock (lockObj)
+						SwitchCommand(dev => dev.CardReset(int.Parse(urlArgs[0])));
+				});
+
+				server.AddExactRoute("POST", @"/switch/reset", (request, response) =>
+				{
+					lock (lockObj)
+						SwitchCommand(dev => dev.Reset());
+				});
+
+				server.AddExactRoute("POST", @"/switch/local", (request, response) =>
+				{
+					lock (lockObj)
+						SwitchCommand(dev => dev.Local());
+				});
+
+				server.AddExactRoute("POST", @"/switch/display/text", (request, response) =>
+				{
+					var text = request.ReadBodyJson<string>();
+
+					lock (lockObj)
+						SwitchCommand(dev => dev.DisplayString(text));
+				});
+
+				server.AddExactRoute("POST", @"/switch/display/clear", (request, response) =>
+				{
+					lock (lockObj)
+						SwitchCommand(dev => dev.DisplayOn());
+				});
+			}
+
+			if (config.MeterGpibAddress != null)
 			{
-				var state = request.ReadBodyJson<bool>();
+				server.Log($"Using meter GPIB address {config.MeterGpibAddress}.");
 
-				lock (lockObj)
-					DoCommand(dev => dev.SetState(int.Parse(urlArgs[0]), int.Parse(urlArgs[1]), state));
-			});
+				MeterCommand(dev => dev.Reset(), configureAdapter: true);
 
-			server.AddRoute("GET", @"/slot/(\d+)/digital-port/([^/]+)", (urlArgs, request, response) =>
-			{
-				var port =
-					urlArgs[1] == "low-byte" ? HP_3488A.DigitalPort.LowByte :
-					urlArgs[1] == "high-byte" ? HP_3488A.DigitalPort.HighByte :
-					throw new ArgumentException();
+				server.AddExactRoute("POST", @"/meter/reset", (request, response) =>
+				{
+					lock (lockObj)
+						MeterCommand(dev => dev.Reset());
+				});
 
-				var value = 0;
+				server.AddExactRoute("POST", @"/meter/local", (request, response) =>
+				{
+					lock (lockObj)
+						MeterCommand(dev => dev.Local());
+				});
 
-				lock (lockObj)
-					value = DoCommand(dev => dev.DigitalRead(int.Parse(urlArgs[0]), port));
+				server.AddExactRoute("GET", @"/meter/volts", (request, response) =>
+				{
+					var volts = 0d;
 
-				response.WriteBodyJson(value);
-			});
+					lock (lockObj)
+						volts = MeterCommand(dev => dev.ReadVolts());
 
-			server.AddRoute("POST", @"/slot/(\d+)/digital-port/([^/]+)", (urlArgs, request, response) =>
-			{
-				var port =
-					urlArgs[1] == "low-byte" ? HP_3488A.DigitalPort.LowByte :
-					urlArgs[1] == "high-byte" ? HP_3488A.DigitalPort.HighByte :
-					throw new ArgumentException();
+					response.WriteBodyJson(volts);
+				});
 
-				var value = request.ReadBodyJson<byte>();
+				server.AddExactRoute("POST", @"/meter/range", (request, response) =>
+				{
+					var range = request.ReadBodyJson<double>();
 
-				lock (lockObj)
-					DoCommand(dev => dev.DigitalWrite(int.Parse(urlArgs[0]), port, value));
-			});
-
-			server.AddRoute("POST", @"/slot/(\d+)/reset", (urlArgs, request, response) =>
-			{
-				lock (lockObj)
-					DoCommand(dev => dev.CardReset(int.Parse(urlArgs[0])));
-			});
-
-			server.AddExactRoute("POST", @"/reset", (request, response) =>
-			{
-				lock (lockObj)
-					DoCommand(dev => dev.Reset());
-			});
-
-			server.AddExactRoute("POST", @"/local", (request, response) =>
-			{
-				lock (lockObj)
-					DoCommand(dev => dev.Local());
-			});
-
-			server.AddExactRoute("POST", @"/display/text", (request, response) =>
-			{
-				var text = request.ReadBodyJson<string>();
-
-				lock (lockObj)
-					DoCommand(dev => dev.DisplayString(text));
-			});
-
-			server.AddExactRoute("POST", @"/display/clear", (request, response) =>
-			{
-				lock (lockObj)
-					DoCommand(dev => dev.DisplayOn());
-			});
+					lock (lockObj)
+						MeterCommand(dev => dev.SetRange(range));
+				});
+			}
 
 			server.Start();
 

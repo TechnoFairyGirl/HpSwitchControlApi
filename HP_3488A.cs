@@ -17,6 +17,7 @@ namespace HpSwitchControlApi
 
 		public string Host { get => gpib.Host; }
 		public int Address { get => gpib.Address; }
+		public bool Connected { get => gpib.Connected; }
 
 		readonly GPIB gpib;
 
@@ -61,6 +62,6 @@ namespace HpSwitchControlApi
 			gpib.Query($"DOFF");
 
 		public void Reset() =>
-			gpib.Query($"RESET");
+			gpib.Reset();
 	}
 }

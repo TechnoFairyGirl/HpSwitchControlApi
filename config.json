@@ -1,6 +1,7 @@
 ﻿{
 	"gpibHost": "gpio.int.bork.in",
-	"gpibAddress": 8,
+	"switchGpibAddress": 8,
+	"meterGpibAddress": 23,
 	"httpPort": 8091,
 	"httpToken": "",
 }
